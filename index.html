@@ -363,7 +363,7 @@ canvas{display:block; width:100%;}
       <div class="onboard-form">
         <div>
           <label class="field-label">Your name</label>
-          <input id="ob-name" placeholder="e.g. Rizvy" maxlength="24">
+          <input id="ob-name" placeholder="e.g. Ayaan" maxlength="24">
         </div>
         <div>
           <label class="field-label">Challenge length</label>
@@ -616,6 +616,11 @@ canvas{display:block; width:100%;}
 <script>
 /* ================= STATE ================= */
 const STORE_KEY = 'boostYourself_state_v1';
+
+// ⚠️ SET THIS to your deployed backend URL (see /backend/README.md) to enable
+// real background push notifications. Leave as-is to keep using local-only
+// reminders (fire while the app/tab is open).
+const PUSH_SERVER_URL = 'https://YOUR-BACKEND-URL.onrender.com';
 let state = null;
 let activeDay = null; // day number currently open in detail view
 let charts = {};
@@ -708,6 +713,59 @@ function registerServiceWorker(){
   }
 }
 
+// ---- Real background push (works even when the app is closed) ----
+function urlBase64ToUint8Array(base64String){
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = atob(base64);
+  return Uint8Array.from([...rawData].map(c => c.charCodeAt(0)));
+}
+
+async function subscribeToPush(){
+  const isConfigured = PUSH_SERVER_URL && !PUSH_SERVER_URL.includes('YOUR-BACKEND-URL');
+  if(!isConfigured || !('serviceWorker' in navigator) || !('PushManager' in window)) return;
+
+  try{
+    const reg = await navigator.serviceWorker.ready;
+    const { publicKey } = await fetch(PUSH_SERVER_URL + '/vapid-public-key').then(r=>r.json());
+
+    let sub = await reg.pushManager.getSubscription();
+    if(!sub){
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicKey)
+      });
+    }
+
+    await fetch(PUSH_SERVER_URL + '/subscribe', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ subscription: sub, reminders: activeRemindersPayload() })
+    });
+  }catch(err){
+    console.warn('Push subscription failed (falling back to local reminders):', err);
+  }
+}
+
+async function syncRemindersToServer(){
+  const isConfigured = PUSH_SERVER_URL && !PUSH_SERVER_URL.includes('YOUR-BACKEND-URL');
+  if(!isConfigured || !('serviceWorker' in navigator)) return;
+  try{
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if(!sub) return;
+    await fetch(PUSH_SERVER_URL + '/update-reminders', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ endpoint: sub.endpoint, reminders: activeRemindersPayload() })
+    });
+  }catch(err){ console.warn('Reminder sync failed:', err); }
+}
+
+function activeRemindersPayload(){
+  return (state.reminderTimes||[]).filter(r=>r.on).map(r=>({ id:r.id, label:r.label, time:r.time }));
+}
+
 function startReminderLoop(){
   setInterval(()=>{
     if(!state || !state.reminders) return;
@@ -769,6 +827,7 @@ function currentDayNumber(){
 window.addEventListener('DOMContentLoaded', ()=>{
   load();
   registerServiceWorker();
+  if('Notification' in window && Notification.permission==='granted' && state.reminders) subscribeToPush();
   startReminderLoop();
   document.getElementById('ob-date').value = todayStr();
   document.querySelectorAll('.dur-opt').forEach(el=>{
@@ -842,6 +901,7 @@ function togglePref(key){
       Notification.requestPermission().then(perm=>{
         state.reminders = true; save();
         updateNotifUI();
+        if(perm==='granted') subscribeToPush();
         toast(perm==='granted' ? 'Notifications enabled' : 'Reminders on (browser notifications blocked)');
       });
       return;
@@ -1542,10 +1602,12 @@ function renderReminderList(){
 }
 function updateReminderTime(i, val){
   state.reminderTimes[i].time = val; save();
+  syncRemindersToServer();
 }
 function toggleReminder(i){
   state.reminderTimes[i].on = !state.reminderTimes[i].on; save();
   renderReminderList();
+  syncRemindersToServer();
 }
 
 /* ================= DATA ================= */
