@@ -569,6 +569,14 @@ canvas{display:block; width:100%;}
           <div class="switch" id="pref-remind" onclick="togglePref('reminders')"></div>
         </div>
         <div id="reminder-list"></div>
+        <div class="settings-row" style="align-items:flex-start; padding-top:10px;">
+          <div class="l" style="width:100%;">
+            <small id="push-debug-status" style="display:block; word-break:break-word; line-height:1.5;">Push status: not checked yet</small>
+          </div>
+        </div>
+        <div style="padding:0 16px 16px;">
+          <button class="ghost-btn" style="width:100%; padding:10px; font-size:12px;" onclick="subscribeToPush(true)">Test / Retry Push Setup</button>
+        </div>
       </div>
 
       <div class="section-head"><h3>Daily Goals</h3></div>
@@ -620,7 +628,7 @@ const STORE_KEY = 'boostYourself_state_v1';
 // ⚠️ SET THIS to your deployed backend URL (see /backend/README.md) to enable
 // real background push notifications. Leave as-is to keep using local-only
 // reminders (fire while the app/tab is open).
-const PUSH_SERVER_URL = 'https://boost-yourself-backend.onrender.com';
+const PUSH_SERVER_URL = 'https://YOUR-BACKEND-URL.onrender.com';
 let state = null;
 let activeDay = null; // day number currently open in detail view
 let charts = {};
@@ -721,29 +729,53 @@ function urlBase64ToUint8Array(base64String){
   return Uint8Array.from([...rawData].map(c => c.charCodeAt(0)));
 }
 
-async function subscribeToPush(){
+function pushDebug(msg){
+  const el = document.getElementById('push-debug-status');
+  if(el) el.textContent = 'Push status: ' + msg;
+  console.log('[push]', msg);
+}
+
+async function subscribeToPush(manualTest){
   const isConfigured = PUSH_SERVER_URL && !PUSH_SERVER_URL.includes('YOUR-BACKEND-URL');
-  if(!isConfigured || !('serviceWorker' in navigator) || !('PushManager' in window)) return;
+  if(!isConfigured){ pushDebug('PUSH_SERVER_URL not set in index.html'); return; }
+  if(!('serviceWorker' in navigator)){ pushDebug('serviceWorker not supported in this browser'); return; }
+  if(!('PushManager' in window)){ pushDebug('PushManager not supported in this browser'); return; }
 
   try{
+    pushDebug('waiting for service worker...');
     const reg = await navigator.serviceWorker.ready;
-    const { publicKey } = await fetch(PUSH_SERVER_URL + '/vapid-public-key').then(r=>r.json());
+
+    pushDebug('fetching VAPID key from ' + PUSH_SERVER_URL + ' ...');
+    const res = await fetch(PUSH_SERVER_URL + '/vapid-public-key');
+    if(!res.ok){ pushDebug('server responded with error: HTTP ' + res.status); return; }
+    const { publicKey } = await res.json();
+    if(!publicKey){ pushDebug('server did not return a publicKey'); return; }
 
     let sub = await reg.pushManager.getSubscription();
-    if(!sub){
+    if(!sub || manualTest){
+      pushDebug('creating browser push subscription...');
+      if(sub && manualTest){ await sub.unsubscribe().catch(()=>{}); }
       sub = await reg.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(publicKey)
       });
     }
 
-    await fetch(PUSH_SERVER_URL + '/subscribe', {
+    pushDebug('sending subscription to server...');
+    const saveRes = await fetch(PUSH_SERVER_URL + '/subscribe', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ subscription: sub, reminders: activeRemindersPayload() })
     });
+
+    if(saveRes.ok){
+      pushDebug('✅ success — subscribed and saved on server');
+    } else {
+      pushDebug('server rejected save: HTTP ' + saveRes.status);
+    }
   }catch(err){
-    console.warn('Push subscription failed (falling back to local reminders):', err);
+    pushDebug('❌ error — ' + (err && err.message ? err.message : String(err)));
+    console.warn('Push subscription failed:', err);
   }
 }
 
