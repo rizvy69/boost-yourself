@@ -456,7 +456,7 @@ canvas{display:block; width:100%;}
 
     <!-- ================= CHALLENGE GRID ================= -->
     <div class="view" id="view-challenge">
-      <h2 style="font-size:18px; margin:2px 0 2px;">180 Days Challenge</h2>
+      <h2 style="font-size:18px; margin:2px 0 2px;" id="challenge-title">180 Days Challenge</h2>
       <div class="greet-date" id="challenge-sub">Tap any unlocked day to view its checklist</div>
       <div class="toggle-pills">
         <div class="toggle-pill sel" id="pill-grid" onclick="setChallengeMode('grid')">Grid</div>
@@ -560,6 +560,13 @@ canvas{display:block; width:100%;}
           <div class="l">Install App<small>Add to home screen, use offline</small></div>
           <button class="ghost-btn" id="install-btn-profile" style="padding:8px 14px; font-size:12px;" onclick="installApp()">Install</button>
         </div>
+        <div class="settings-row">
+          <div class="l">Challenge Length<small id="duration-sub">180 days</small></div>
+          <div class="seg-btns" style="width:150px;">
+            <div class="seg-btn" id="dur-btn-90" style="padding:8px; font-size:12px;" onclick="changeDuration(90)">90</div>
+            <div class="seg-btn" id="dur-btn-180" style="padding:8px; font-size:12px;" onclick="changeDuration(180)">180</div>
+          </div>
+        </div>
       </div>
 
       <div class="section-head"><h3>Notifications</h3></div>
@@ -569,14 +576,6 @@ canvas{display:block; width:100%;}
           <div class="switch" id="pref-remind" onclick="togglePref('reminders')"></div>
         </div>
         <div id="reminder-list"></div>
-        <div class="settings-row" style="align-items:flex-start; padding-top:10px;">
-          <div class="l" style="width:100%;">
-            <small id="push-debug-status" style="display:block; word-break:break-word; line-height:1.5;">Push status: not checked yet</small>
-          </div>
-        </div>
-        <div style="padding:0 16px 16px;">
-          <button class="ghost-btn" style="width:100%; padding:10px; font-size:12px;" onclick="subscribeToPush(true)">Test / Retry Push Setup</button>
-        </div>
       </div>
 
       <div class="section-head"><h3>Daily Goals</h3></div>
@@ -625,10 +624,6 @@ canvas{display:block; width:100%;}
 /* ================= STATE ================= */
 const STORE_KEY = 'boostYourself_state_v1';
 
-// ⚠️ SET THIS to your deployed backend URL (see /backend/README.md) to enable
-// real background push notifications. Leave as-is to keep using local-only
-// reminders (fire while the app/tab is open).
-const PUSH_SERVER_URL = 'https://YOUR-BACKEND-URL.onrender.com';
 let state = null;
 let activeDay = null; // day number currently open in detail view
 let charts = {};
@@ -721,83 +716,6 @@ function registerServiceWorker(){
   }
 }
 
-// ---- Real background push (works even when the app is closed) ----
-function urlBase64ToUint8Array(base64String){
-  const padding = '='.repeat((4 - base64String.length % 4) % 4);
-  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
-  const rawData = atob(base64);
-  return Uint8Array.from([...rawData].map(c => c.charCodeAt(0)));
-}
-
-function pushDebug(msg){
-  const el = document.getElementById('push-debug-status');
-  if(el) el.textContent = 'Push status: ' + msg;
-  console.log('[push]', msg);
-}
-
-async function subscribeToPush(manualTest){
-  const isConfigured = PUSH_SERVER_URL && !PUSH_SERVER_URL.includes('YOUR-BACKEND-URL');
-  if(!isConfigured){ pushDebug('PUSH_SERVER_URL not set in index.html'); return; }
-  if(!('serviceWorker' in navigator)){ pushDebug('serviceWorker not supported in this browser'); return; }
-  if(!('PushManager' in window)){ pushDebug('PushManager not supported in this browser'); return; }
-
-  try{
-    pushDebug('waiting for service worker...');
-    const reg = await navigator.serviceWorker.ready;
-
-    pushDebug('fetching VAPID key from ' + PUSH_SERVER_URL + ' ...');
-    const res = await fetch(PUSH_SERVER_URL + '/vapid-public-key');
-    if(!res.ok){ pushDebug('server responded with error: HTTP ' + res.status); return; }
-    const { publicKey } = await res.json();
-    if(!publicKey){ pushDebug('server did not return a publicKey'); return; }
-
-    let sub = await reg.pushManager.getSubscription();
-    if(!sub || manualTest){
-      pushDebug('creating browser push subscription...');
-      if(sub && manualTest){ await sub.unsubscribe().catch(()=>{}); }
-      sub = await reg.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(publicKey)
-      });
-    }
-
-    pushDebug('sending subscription to server...');
-    const saveRes = await fetch(PUSH_SERVER_URL + '/subscribe', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ subscription: sub, reminders: activeRemindersPayload() })
-    });
-
-    if(saveRes.ok){
-      pushDebug('✅ success — subscribed and saved on server');
-    } else {
-      pushDebug('server rejected save: HTTP ' + saveRes.status);
-    }
-  }catch(err){
-    pushDebug('❌ error — ' + (err && err.message ? err.message : String(err)));
-    console.warn('Push subscription failed:', err);
-  }
-}
-
-async function syncRemindersToServer(){
-  const isConfigured = PUSH_SERVER_URL && !PUSH_SERVER_URL.includes('YOUR-BACKEND-URL');
-  if(!isConfigured || !('serviceWorker' in navigator)) return;
-  try{
-    const reg = await navigator.serviceWorker.ready;
-    const sub = await reg.pushManager.getSubscription();
-    if(!sub) return;
-    await fetch(PUSH_SERVER_URL + '/update-reminders', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ endpoint: sub.endpoint, reminders: activeRemindersPayload() })
-    });
-  }catch(err){ console.warn('Reminder sync failed:', err); }
-}
-
-function activeRemindersPayload(){
-  return (state.reminderTimes||[]).filter(r=>r.on).map(r=>({ id:r.id, label:r.label, time:r.time }));
-}
-
 function startReminderLoop(){
   setInterval(()=>{
     if(!state || !state.reminders) return;
@@ -835,7 +753,10 @@ function load(){
 function save(){ localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
 
 function todayStr(d=new Date()){
-  return d.toISOString().slice(0,10);
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,'0');
+  const day = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
 }
 function dayNumberFor(dateStr){
   const start = new Date(state.startDate+'T00:00:00');
@@ -859,7 +780,6 @@ function currentDayNumber(){
 window.addEventListener('DOMContentLoaded', ()=>{
   load();
   registerServiceWorker();
-  if('Notification' in window && Notification.permission==='granted' && state.reminders) subscribeToPush();
   startReminderLoop();
   document.getElementById('ob-date').value = todayStr();
   document.querySelectorAll('.dur-opt').forEach(el=>{
@@ -933,7 +853,6 @@ function togglePref(key){
       Notification.requestPermission().then(perm=>{
         state.reminders = true; save();
         updateNotifUI();
-        if(perm==='granted') subscribeToPush();
         toast(perm==='granted' ? 'Notifications enabled' : 'Reminders on (browser notifications blocked)');
       });
       return;
@@ -1143,6 +1062,7 @@ function openDayFromDash(){
 
 /* ================= CHALLENGE GRID ================= */
 function renderChallengeGrid(){
+  document.getElementById('challenge-title').textContent = `${state.duration} Days Challenge`;
   document.getElementById('challenge-sub').textContent = `${state.duration}-day challenge · started ${new Date(state.startDate+'T00:00:00').toLocaleDateString()}`;
   document.getElementById('pill-grid').classList.toggle('sel', state.challengeMode!=='calendar');
   document.getElementById('pill-cal').classList.toggle('sel', state.challengeMode==='calendar');
@@ -1577,6 +1497,18 @@ function renderPieChart(days){
 }
 
 /* ================= PROFILE ================= */
+function changeDuration(newDur){
+  if(state.duration === newDur) return;
+  if(newDur < state.duration){
+    const hasDataBeyond = Object.keys(state.entries).some(n => parseInt(n) > newDur);
+    if(hasDataBeyond && !confirm(`Shortening to ${newDur} days will hide logged data beyond day ${newDur} (it stays saved but won't count). Continue?`)) return;
+  }
+  state.duration = newDur;
+  save();
+  renderProfile();
+  toast(`Challenge length set to ${newDur} days`);
+}
+
 function renderProfile(){
   document.getElementById('profile-avatar').textContent = state.name.charAt(0).toUpperCase();
   document.getElementById('profile-name').textContent = state.name;
@@ -1595,6 +1527,10 @@ function renderProfile(){
 
   renderGoalsList();
   renderReminderList();
+
+  document.getElementById('duration-sub').textContent = state.duration + ' days';
+  document.getElementById('dur-btn-90').classList.toggle('sel-yes', state.duration===90);
+  document.getElementById('dur-btn-180').classList.toggle('sel-yes', state.duration===180);
 
   const installBtn = document.getElementById('install-btn-profile');
   if(installBtn){
@@ -1634,12 +1570,10 @@ function renderReminderList(){
 }
 function updateReminderTime(i, val){
   state.reminderTimes[i].time = val; save();
-  syncRemindersToServer();
 }
 function toggleReminder(i){
   state.reminderTimes[i].on = !state.reminderTimes[i].on; save();
   renderReminderList();
-  syncRemindersToServer();
 }
 
 /* ================= DATA ================= */
