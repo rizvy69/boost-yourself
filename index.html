@@ -715,9 +715,17 @@ function dismissInstallBanner(){
   localStorage.setItem('boostYourself_installDismissed','1');
 }
 
+let swRegistrationError = null;
 function registerServiceWorker(){
   if('serviceWorker' in navigator && (location.protocol==='https:' || location.hostname==='localhost')){
-    navigator.serviceWorker.register('sw.js').catch(()=>{});
+    navigator.serviceWorker.register('sw.js')
+      .then(reg=>{ console.log('SW registered, scope:', reg.scope); })
+      .catch(err=>{
+        swRegistrationError = err;
+        console.error('SW registration failed:', err);
+      });
+  } else {
+    swRegistrationError = new Error('serviceWorker unsupported or not on HTTPS (protocol: '+location.protocol+')');
   }
 }
 
@@ -743,7 +751,18 @@ async function subscribeToPush(manualTest){
 
   try{
     pushDebug('waiting for service worker...');
-    const reg = await navigator.serviceWorker.ready;
+    const regList = await navigator.serviceWorker.getRegistrations();
+    console.log('Current SW registrations:', regList.length, regList.map(r=>r.scope));
+    if(swRegistrationError){
+      pushDebug('❌ service worker failed to register: ' + swRegistrationError.message);
+      return;
+    }
+    if(regList.length===0){
+      pushDebug('❌ no service worker registered at all — retrying registration...');
+      await navigator.serviceWorker.register('sw.js').catch(err=>{ throw err; });
+    }
+    const readyTimeout = new Promise((_,reject)=> setTimeout(()=>reject(new Error('timed out after 8s waiting for navigator.serviceWorker.ready')), 8000));
+    const reg = await Promise.race([navigator.serviceWorker.ready, readyTimeout]);
 
     pushDebug('fetching VAPID key from ' + PUSH_SERVER_URL + ' ...');
     const res = await fetch(PUSH_SERVER_URL + '/vapid-public-key');
@@ -794,6 +813,13 @@ async function subscribeToPush(manualTest){
     console.warn('Push subscription failed:', err);
   }
 }
+
+// Expose for manual debugging from Chrome's remote devtools / console if needed.
+window.__debugSW = async function(){
+  const regs = await navigator.serviceWorker.getRegistrations();
+  console.log('Registrations:', regs);
+  return regs.map(r=>({scope:r.scope, active: !!r.active, installing: !!r.installing, waiting: !!r.waiting}));
+};
 
 async function syncRemindersToServer(){
   const isConfigured = PUSH_SERVER_URL && !PUSH_SERVER_URL.includes('YOUR-BACKEND-URL');
