@@ -768,10 +768,26 @@ async function subscribeToPush(manualTest){
       body: JSON.stringify({ subscription: sub, reminders: activeRemindersPayload() })
     });
 
-    if(saveRes.ok){
-      pushDebug('✅ success — subscribed and saved on server');
-    } else {
+    if(!saveRes.ok){
       pushDebug('server rejected save: HTTP ' + saveRes.status);
+      return;
+    }
+
+    if(manualTest){
+      pushDebug('subscription saved — sending a real test push now...');
+      const testRes = await fetch(PUSH_SERVER_URL + '/send-test', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ endpoint: sub.endpoint })
+      });
+      if(testRes.ok){
+        pushDebug('✅ success — test push sent! Check your notification shade in a few seconds.');
+      } else {
+        const body = await testRes.json().catch(()=>({}));
+        pushDebug('test push failed: HTTP ' + testRes.status + (body.error ? ' — ' + body.error : ''));
+      }
+    } else {
+      pushDebug('✅ success — subscribed and saved on server');
     }
   }catch(err){
     pushDebug('❌ error — ' + (err && err.message ? err.message : String(err)));
