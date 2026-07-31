@@ -456,7 +456,7 @@ canvas{display:block; width:100%;}
 
     <!-- ================= CHALLENGE GRID ================= -->
     <div class="view" id="view-challenge">
-      <h2 style="font-size:18px; margin:2px 0 2px;">180 Days Challenge</h2>
+      <h2 style="font-size:18px; margin:2px 0 2px;" id="challenge-title">180 Days Challenge</h2>
       <div class="greet-date" id="challenge-sub">Tap any unlocked day to view its checklist</div>
       <div class="toggle-pills">
         <div class="toggle-pill sel" id="pill-grid" onclick="setChallengeMode('grid')">Grid</div>
@@ -753,7 +753,10 @@ function load(){
 function save(){ localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
 
 function todayStr(d=new Date()){
-  return d.toISOString().slice(0,10);
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,'0');
+  const day = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
 }
 function dayNumberFor(dateStr){
   const start = new Date(state.startDate+'T00:00:00');
@@ -1059,6 +1062,7 @@ function openDayFromDash(){
 
 /* ================= CHALLENGE GRID ================= */
 function renderChallengeGrid(){
+  document.getElementById('challenge-title').textContent = `${state.duration} Days Challenge`;
   document.getElementById('challenge-sub').textContent = `${state.duration}-day challenge · started ${new Date(state.startDate+'T00:00:00').toLocaleDateString()}`;
   document.getElementById('pill-grid').classList.toggle('sel', state.challengeMode!=='calendar');
   document.getElementById('pill-cal').classList.toggle('sel', state.challengeMode==='calendar');
